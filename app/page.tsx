@@ -10,6 +10,10 @@ export default function Home() {
   const [brief, setBrief] = useState<Brief>(emptyBrief);
   const [outline, setOutline] = useState<Brief | null>(null);
   const [error, setError] = useState("");
+  const [aiLoading, setAiLoading] = useState(false);
+  const [aiError, setAiError] = useState("");
+  const [aiResult, setAiResult] = useState<{ concept: string; imageDataUrl: string | null; model: string; imageRequested: boolean; imageGenerated: boolean } | null>(null);
+  const [generateImage, setGenerateImage] = useState(false);
   const requiredCount = [brief.brand, brief.objective, brief.audience].filter(v => v.trim()).length;
   const progress = Math.round(requiredCount / 3 * 100);
   function update<K extends keyof Brief>(key: K, value: Brief[K]) {
@@ -23,6 +27,27 @@ export default function Home() {
       return;
     }
     setOutline({ ...brief });
+  }
+  async function generateAiConcept() {
+    if (!outline || aiLoading) return;
+    setAiLoading(true);
+    setAiError("");
+    setAiResult(null);
+    try {
+      const response = await fetch("/api/concept", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ brief: outline, generateImage }),
+      });
+      const data = await response.json().catch(() => null);
+      if (!response.ok) throw new Error(typeof data?.error === "string" ? data.error : "Could not generate a concept. Please retry.");
+      if (typeof data?.concept !== "string" || !data.concept.trim()) throw new Error("The response was empty. Please retry.");
+      setAiResult({ concept: data.concept, imageDataUrl: typeof data.imageDataUrl === "string" ? data.imageDataUrl : null, model: typeof data.model === "string" ? data.model : "configured model", imageRequested: data.imageRequested === true, imageGenerated: data.imageGenerated === true });
+    } catch (cause) {
+      setAiError(cause instanceof Error ? cause.message : "A network error occurred. Please try again.");
+    } finally {
+      setAiLoading(false);
+    }
   }
   function copyOutline() {
     if (!outline || !navigator.clipboard) return;
@@ -63,13 +88,13 @@ export default function Home() {
           </form>
           <aside className="right-rail"><section className="guide-card" id="method"><div className="guide-icon">✳</div><span className="tiny-label">A SIMPLE METHOD</span><h3>Clarity before creativity.</h3><p>Build a direction from the facts you provide—not invented market data or unsupported performance claims.</p><ol><li><i>1</i><div><strong>Define</strong><small>Set the objective and audience.</small></div></li><li><i>2</i><div><strong>Focus</strong><small>Clarify the offer and constraints.</small></div></li><li><i>3</i><div><strong>Shape</strong><small>Review a structured outline.</small></div></li></ol></section><section className="note-card"><span className="note-symbol">i</span><div><strong>Evidence-first by design</strong><p>No fabricated results, audience statistics, testimonials, or live integrations are shown in this starter.</p></div></section></aside>
         </div>
-        {outline && <section className="output-card" aria-live="polite"><div className="output-head"><div><span className="tiny-label">YOUR WORKING DRAFT</span><h2>{outline.brand}: campaign concept</h2></div><button className="secondary-button" type="button" onClick={()=>setOutline(null)}>Close outline</button></div><div className="output-grid">
+        {outline && <section className="output-card" aria-live="polite"><div className="output-head"><div><span className="tiny-label">YOUR WORKING DRAFT</span><h2>{outline.brand}: campaign concept</h2></div><button className="secondary-button" type="button" onClick={()=>{setOutline(null);setAiResult(null);setAiError("");}}>Close outline</button></div><div className="output-grid">
           <div><span>OBJECTIVE</span><p>{outline.objective}</p></div><div><span>CHANNEL</span><p>{outline.channel}</p></div><div><span>TONE</span><p>{outline.tone}</p></div>
           <div className="wide"><span>INTENDED AUDIENCE</span><p>{outline.audience}</p></div>
           <div className="wide"><span>OFFER OR MESSAGE</span><p>{outline.offer.trim() || "Not provided — confirm before finalizing the creative."}</p></div>
           <div className="wide"><span>CONSTRAINTS & PROOF POINTS</span><p>{outline.constraints.trim() || "Not provided — verify facts, timing, and restrictions before publication."}</p></div>
           <div className="wide recommendation"><span>NEXT STEP</span><p>Develop 2–3 creative routes, then validate claims and channel fit against the brief. No external research or performance forecast has been performed by this tool.</p></div>
-        </div><button className="secondary-button copy-button" type="button" onClick={copyOutline}>Copy outline text ↗</button></section>}
+        </div><div className="ai-controls"><label className="image-option"><input type="checkbox" checked={generateImage} onChange={e=>setGenerateImage(e.target.checked)}/> Include an AI-generated visual (optional)</label><button className="ai-button" type="button" onClick={generateAiConcept} disabled={aiLoading}>{aiLoading ? "Creating your concept…" : "Generate full AI campaign ↗"}</button></div>{aiError && <p className="form-error" role="alert">{aiError}</p>}{aiResult && <section className="ai-result" aria-live="polite"><div className="ai-result-head"><div><span className="tiny-label">AI-GENERATED CREATIVE DIRECTION</span><h3>From brief to campaign</h3></div><span className="model-label">Model: {aiResult.model}</span></div><p className="ai-disclaimer">Review all claims and recommendations before publication. AI output may contain errors and is not market research.</p><div className="ai-copy">{aiResult.concept}</div>{aiResult.imageDataUrl && <figure className="generated-visual"><img src={aiResult.imageDataUrl} alt={"AI-generated campaign visual concept for " + outline.brand}/><figcaption>AI-generated visual draft — review brand, text, rights, and factual details before use.</figcaption></figure>}{aiResult.imageRequested && !aiResult.imageGenerated && <p className="form-hint">Text concept generated, but no image was returned. You can retry with the visual option enabled.</p>}<button className="secondary-button copy-button" type="button" onClick={()=>{void navigator.clipboard?.writeText(aiResult.concept);}}>Copy AI concept ↗</button></section>}<button className="secondary-button copy-button" type="button" onClick={copyOutline}>Copy brief outline ↗</button></section>}
         <footer className="footer"><span>CAMPAIGN CONCEPT STUDIO <i>•</i> INITIAL FOUNDATION</span><span>Clear thinking. No made-up numbers.</span></footer>
       </div>
     </section>
