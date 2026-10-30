@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { NextResponse } from "next/server";
 
 export const runtime = "nodejs";
@@ -15,6 +16,8 @@ type Brief = {
 
 const NO_STORE = { "Cache-Control": "no-store" };
 const MAX_BODY_BYTES = 12_000;
+const RATE_LIMIT = 5;
+const RATE_WINDOW_SECONDS = 60 * 60;
 const clean = (value: unknown, max: number) =>
   typeof value === "string" ? value.trim().slice(0, max) : "";
 
@@ -22,16 +25,78 @@ function jsonError(error: string, status: number) {
   return NextResponse.json({ error }, { status, headers: NO_STORE });
 }
 
+function isSameOrigin(request: Request) {
+  const origin = request.headers.get("origin");
+  if (!origin) return false;
+  try {
+    const parsed = new URL(origin);
+    const host = request.headers.get("x-forwarded-host") ?? request.headers.get("host");
+    const forwardedProto = request.headers.get("x-forwarded-proto");
+    const protocol = forwardedProto ? `${forwardedProto}:` : new URL(request.url).protocol;
+    return Boolean(host) && parsed.host.toLowerCase() === host.toLowerCase() &&
+      parsed.protocol === protocol;
+  } catch {
+    return false;
+  }
+}
+
+async function enforceRateLimit(request: Request) {
+  const url = process.env.UPSTASH_REDIS_REST_URL;
+  const token = process.env.UPSTASH_REDIS_REST_TOKEN;
+  if (!url || !token) return "unconfigured" as const;
+
+  const forwarded = request.headers.get("x-forwarded-for")?.split(",")[0]?.trim();
+  const address = forwarded || "unknown";
+  const digest = createHash("sha256").update(address).digest("hex").slice(0, 32);
+  const key = `campaign-generation:${digest}`;
+
+  const response = await fetch(url, {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${token}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify([
+      "EVAL",
+      "local count = redis.call('INCR', KEYS[1]); if local == 1 then redis.call('EXPIRE', KEYS[1], ARGV[1]); end; return local",
+      "1",
+      key,
+      String(RATE_WINDOW_SECONDS),
+    ]),
+    signal: AbortSignal.timeout(3_000),
+    cache: "no-store",
+  });
+  if (!response.ok) return "unavailable" as const;
+  const payload: unknown = await response.json();
+  const count = payload && typeof payload === "object"
+    ? (payload as { result?: unknown }).result
+    : null;
+  if (typeof count !== "number" || !Number.isFinite(count)) return "unavailable" as const;
+  return count > RATE_LIMIT ? "limited" as const : "allowed" as const;
+}
+
 export async function POST(request: Request) {
   if (process.env.CAMPAIGN_GENERATION_ENABLED !== "true") {
     return jsonError("AI generation is disabled for this deployment.", 503);
+  }
+
+  if (!isSameOrigin(request)) {
+    return jsonError("This request origin is not allowed.", 403);
+  }
+
+  const limit = await enforceRateLimit(request).catch(() => "unavailable" as const);
+  if (limit === "unconfigured" || limit === "unavailable") {
+    return jsonError("AI generation is temporarily unavailable because abuse protection is not configured.", 503);
+  }
+  if (limit === "limited") {
+    return jsonError("You have reached the generation limit. Try again later.", 429);
   }
 
   const apiKey = process.env.OPENAI_API_KEY;
   if (!apiKey) return jsonError("AI generation is not configured on the server.", 503);
 
   const contentType = request.headers.get("content-type") ?? "";
-  if (!/^application\/json(?:\s*;|\s*$)/i.test(contentType)) {
+  if (!/^application\\/json(?:\\s*;|\\s*$)/i.test(contentType)) {
     return jsonError("Send a JSON request.", 415);
   }
 
@@ -90,7 +155,7 @@ export async function POST(request: Request) {
     "Write in the brief's language; if unclear, use clear English.",
     "BRIEF:",
     JSON.stringify(normalized, null, 2),
-  ].join("\n");
+  ].join("\\n");
 
   try {
     const upstream = await fetch("https://api.openai.com/v1/responses", {
@@ -110,10 +175,9 @@ export async function POST(request: Request) {
     });
 
     if (!upstream.ok) {
-      const requestId = upstream.headers.get("x-request-id") ?? undefined;
       console.error("Campaign provider request failed", {
         status: upstream.status,
-        requestId,
+        requestId: upstream.headers.get("x-request-id") ?? undefined,
       });
       if (upstream.status === 429) {
         return jsonError("The AI service is busy or the account quota is exhausted. Try later.", 429);
@@ -137,7 +201,7 @@ export async function POST(request: Request) {
       .filter((item): item is { type?: string; text?: string } =>
         Boolean(item && typeof item === "object" && (item as { type?: string }).type === "output_text"))
       .map((item) => typeof item.text === "string" ? item.text : "")
-      .join("\n")
+      .join("\\n")
       .trim();
 
     if (!concept) return jsonError("The AI response did not contain a usable concept. Please retry.", 502);
