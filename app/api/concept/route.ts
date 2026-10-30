@@ -96,7 +96,7 @@ export async function POST(request: Request) {
   if (!apiKey) return jsonError("AI generation is not configured on the server.", 503);
 
   const contentType = request.headers.get("content-type") ?? "";
-  if (!/^application\\/json(?:\\s*;|\\s*$)/i.test(contentType)) {
+  if (!/^application\/json(?:\s*;|\s*$)/i.test(contentType)) {
     return jsonError("Send a JSON request.", 415);
   }
 
@@ -155,7 +155,7 @@ export async function POST(request: Request) {
     "Write in the brief's language; if unclear, use clear English.",
     "BRIEF:",
     JSON.stringify(normalized, null, 2),
-  ].join("\\n");
+  ].join("\n");
 
   try {
     const upstream = await fetch("https://api.openai.com/v1/responses", {
@@ -201,7 +201,7 @@ export async function POST(request: Request) {
       .filter((item): item is { type?: string; text?: string } =>
         Boolean(item && typeof item === "object" && (item as { type?: string }).type === "output_text"))
       .map((item) => typeof item.text === "string" ? item.text : "")
-      .join("\\n")
+      .join("\n")
       .trim();
 
     if (!concept) return jsonError("The AI response did not contain a usable concept. Please retry.", 502);
