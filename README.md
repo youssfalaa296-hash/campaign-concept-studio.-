@@ -30,7 +30,7 @@ Open http://localhost:3000.
 
 - `OPENAI_API_KEY`: server-side secret from the OpenAI API platform. Never prefix it with `NEXT_PUBLIC_` and never commit it.
 - `OPENAI_MODEL`: optional model override. Defaults to `gpt-4.1-mini`.
-- `CAMPAIGN_GENERATION_ENABLED`: set to `true` only when you intentionally enable provider-backed generation and have reviewed usage costs and abuse controls. It is disabled unless explicitly enabled.
+- `CAMPAIGN_GENERATION_ENABLED`: set to `true` only after Preview validation and a separate production approval. It is disabled unless explicitly enabled.\n- `UPSTASH_REDIS_REST_URL` and `UPSTASH_REDIS_REST_TOKEN`: required server-only Upstash Redis REST credentials for the endpoint's atomic per-IP rate limit. If either is missing or Redis is unavailable, AI generation fails closed with HTTP 503. Never prefix these variables with `NEXT_PUBLIC_`.
 
 The brief-only workflow works without an API key. AI generation intentionally returns a configuration message until the server key and explicit feature flag are configured.
 
@@ -48,9 +48,9 @@ Before enabling AI generation on a public deployment:
 
 1. Configure `OPENAI_API_KEY` as a server-side Vercel environment variable for the intended environment only.
 2. Set `CAMPAIGN_GENERATION_ENABLED=true` only after reviewing the API account's billing and limits.
-3. Add a durable per-user/IP rate limiter and an abuse-control strategy suitable for serverless deployment. The endpoint is feature-gated, but this starter does not include durable rate limiting or authentication.
+3. Configure Upstash Redis REST credentials in the Preview environment and verify the atomic rate limit. The current endpoint limits each observed client IP to 5 generation attempts per rolling fixed one-hour counter; it fails closed if Redis is unavailable. This is an IP-based control, not user authentication, and production deployments must verify the trusted proxy's client-IP header behavior and consider account-level quotas/CAPTCHA before public launch.
 4. Monitor provider usage and errors; set appropriate project/account spending limits where available.
-5. Test text generation, image generation, invalid input, provider quota errors, missing key, and disabled-feature behavior in a Preview deployment before any production enablement.
+5. Test text generation, image generation, invalid input, missing/wrong origin, rate-limit threshold, Redis unavailable, provider quota errors, missing key, and disabled-feature behavior in a Preview deployment before any production enablement.
 
 Image generation can incur additional provider charges. Keep the visual option off unless it is needed.
 
