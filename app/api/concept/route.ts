@@ -33,7 +33,8 @@ function isSameOrigin(request: Request) {
     const host = request.headers.get("x-forwarded-host") ?? request.headers.get("host");
     const forwardedProto = request.headers.get("x-forwarded-proto");
     const protocol = forwardedProto ? `${forwardedProto}:` : new URL(request.url).protocol;
-    return Boolean(host) && parsed.host.toLowerCase() === host.toLowerCase() &&
+    if (!host) return false;
+    return parsed.host.toLowerCase() === host.toLowerCase() &&
       parsed.protocol === protocol;
   } catch {
     return false;
